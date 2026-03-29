@@ -1,73 +1,127 @@
 from __future__ import annotations
 
-import re
 from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
 
 
-# Je centralise ici les chemins du projet pour que tout le script reste facile a suivre.
+# Je pose d'abord les chemins du projet pour garder un script simple a suivre.
 BASE_DIR = Path(__file__).resolve().parents[1]
 RAW_DIR = BASE_DIR / "data" / "Raw"
 PROCESSED_DIR = BASE_DIR / "data" / "processed"
 
 
-# Je reprends ici les regles importantes du brief.
-LOW_PRICE_THRESHOLD = 0.5
-STALE_PRICE_THRESHOLD = 0.5
-ESTIMATION_WINDOW_YEARS = 10
-
-
-# Je ne garde que les fichiers vraiment utiles pour votre projet.
+# Je garde seulement les fichiers utiles aux parties 1 et 2.1.
+STATIC_FILE = "Static_2025.xlsx"
 SCOPE1_FILE = "DS_CO2_SCOPE_1_Y_2025.xlsx"
 REVENUE_FILE = "DS_REV_Y_2025.xlsx"
 MARKET_VALUE_MONTHLY_FILE = "DS_MV_T_USD_M_2025.xlsx"
 RETURN_INDEX_MONTHLY_FILE = "DS_RI_T_USD_M_2025.xlsx"
-RISK_FREE_FILE = "Risk_Free_Rate_2025.xlsx"
-STATIC_FILE = "Static_2025.xlsx"
 
 
-# Je fixe des noms de sorties simples et ordonnes pour que vous puissiez les lire facilement.
+# Je reprends les regles importantes du document.
+LOW_PRICE_THRESHOLD = 0.5
+STALE_PRICE_THRESHOLD = 0.5
+ESTIMATION_WINDOW_YEARS = 10
+FIRST_FORMATION_YEAR = 2013
+LAST_FORMATION_YEAR = 2024
+
+
+# Je nomme les sorties dans un ordre logique et minimal.
 OUTPUT_FILES = {
-    "em_companies": "A_EM_Companies.xlsx",
-    "monthly_panel": "B_EM_Monthly_Prices.xlsx",
-    "annual_panel": "C_EM_Annual_Data.xlsx",
-    "investment_universe": "D_EM_Investment_Universe.xlsx",
-    "risk_free": "E_Risk_Free_Rate.xlsx",
-    "snapshot_2024": "F_EM_2024_Snapshot.xlsx",
-    "scope1_ready_2024": "G_EM_2024_Scope1_Ready.xlsx",
-    "summary": "H_Cleaning_Summary.xlsx",
+    "companies": "A_EM_Companies.xlsx",
+    "monthly_data": "B_EM_Monthly_Data.xlsx",
+    "annual_data": "C_EM_Annual_Data.xlsx",
+    "base_investment_set": "D_EM_Base_Investment_Set.xlsx",
+}
+
+
+# Je garde les noms techniques dans le code, puis je les rends plus lisibles au moment de l'export.
+EXPORT_COLUMN_NAMES = {
+    "isin": "ISIN",
+    "company_name": "Company Name",
+    "country": "Country",
+    "region": "Region",
+    "delisting_date": "Delisting Date",
+    "date": "Date",
+    "market_value_usd": "Market Value USD",
+    "return_index": "Return Index",
+    "monthly_return": "Monthly Return",
+    "is_delisting_month": "Is Delisting Month",
+    "year": "Year",
+    "scope1_co2": "Scope 1 CO2",
+    "revenue_usd": "Revenue USD",
+    "year_end_market_value_usd": "Year End Market Value USD",
+    "year_end_return_index": "Year End Return Index",
+    "price_available_eoy": "Price Available End Of Year",
+    "formation_year": "Formation Year",
+    "investment_year": "Investment Year",
+    "valid_return_count_10y": "Valid Return Count 10Y",
+    "zero_return_count_10y": "Zero Return Count 10Y",
+    "zero_return_ratio_10y": "Zero Return Ratio 10Y",
+    "stale_price_flag": "Stale Price Flag",
+    "base_investable_next_year": "Base Investable Next Year",
 }
 
 
 def log_step(message: str) -> None:
-    """Je m'affiche dans le terminal pour que l'execution ne paraisse pas bloquee."""
+    """Je m'affiche dans le terminal pour montrer clairement l'avancement."""
     print(message, flush=True)
 
 
+def write_excel(df: pd.DataFrame, file_name: str) -> Path:
+    """
+    J'ecris un fichier Excel a l'emplacement prevu.
+
+    Je garde cette fonction tres simple: si le fichier est deja ouvert dans Excel,
+    Python renverra une erreur et il faudra simplement fermer le fichier puis relancer le script.
+    """
+    target_path = PROCESSED_DIR / file_name
+    df.to_excel(target_path, index=False)
+    return target_path
+
+
+def rename_columns_for_export(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Je rends les noms de colonnes plus clairs dans les fichiers Excel.
+
+    Je ne change pas la logique interne du code; je rends seulement les sorties plus propres.
+    """
+    renamed_df = df.copy()  # Je cree une copie pour ne pas changer les noms utilises dans le reste du script.
+    renamed_df = renamed_df.rename(columns=EXPORT_COLUMN_NAMES)  # Je remplace les noms techniques par des titres plus lisibles.
+    return renamed_df  # Je renvoie la version prete pour l'export Excel.
+
+
 def extract_delisting_date(company_name: str) -> pd.Timestamp | pd.NaT:
-    """Je lis la date de delisting quand Datastream l'a ajoutee dans le nom de l'entreprise."""
-    if not isinstance(company_name, str):
-        return pd.NaT
+    """
+    Je cherche une date de delisting dans le nom Datastream.
 
-    match = re.search(r"DEAD - DELIST\.(\d{2}/\d{2}/\d{2})", company_name)
-    if match is None:
-        return pd.NaT
+    Datastream ajoute souvent quelque chose comme:
+    DEAD - DELIST.23/09/25
+    """
+    if not isinstance(company_name, str):  # Je verifie que j'ai bien un texte a lire.
+        return pd.NaT  # Si ce n'est pas du texte, je considere qu'il n'y a pas de date.
 
-    return pd.to_datetime(match.group(1), format="%d/%m/%y", errors="coerce")
+    marker = "DEAD - DELIST."  # Je definis le texte qui indique un delisting dans Datastream.
+
+    if marker not in company_name:  # Je teste si ce mot-cle est present dans le nom.
+        return pd.NaT  # Si je ne le trouve pas, je laisse la date vide.
+
+    date_text = company_name.split(marker, 1)[1][:8]  # Je recupere les 8 caracteres qui suivent, donc la date.
+    return pd.to_datetime(date_text, format="%d/%m/%y", errors="coerce")  # Je transforme ce texte en vraie date.
 
 
 def load_datastream_file(file_name: str) -> pd.DataFrame:
     """
-    Je charge un export Datastream brut et je retire la ligne parasite du haut.
+    Je charge un export Datastream brut.
 
-    Pourquoi je fais cela:
-    - tous les exports ont une ligne d'erreur sans ISIN,
-    - je veux garder uniquement des lignes d'entreprises exploitables.
+    Ce que je fais tout de suite:
+    - je renomme les colonnes utiles,
+    - je retire la ligne parasite du haut sans ISIN,
+    - je force les colonnes de valeurs en numerique.
     """
-    file_path = RAW_DIR / file_name
-    df = pd.read_excel(file_path)
+    df = pd.read_excel(RAW_DIR / file_name)
     df = df.rename(columns={"NAME": "company_name_raw", "ISIN": "isin"})
     df = df.dropna(subset=["isin"]).copy()
     df["isin"] = df["isin"].astype(str).str.strip()
@@ -81,16 +135,10 @@ def load_datastream_file(file_name: str) -> pd.DataFrame:
 
 def load_em_companies() -> pd.DataFrame:
     """
-    Je construis d'abord mon univers de travail.
+    Je construis mon univers de travail.
 
-    Ce que je fais:
-    - je pars du fichier statique,
-    - je garde seulement les entreprises Emerging Markets,
-    - j'ajoute la date de delisting si elle existe dans le nom.
-
-    Pourquoi je fais cela:
-    - toutes les fusions ensuite doivent se faire a partir d'un univers clair,
-    - cela rend le reste du script beaucoup plus lisible.
+    Je pars du fichier statique et je garde seulement les entreprises EM,
+    puisque c'est la region assignee a votre groupe.
     """
     static_df = pd.read_excel(RAW_DIR / STATIC_FILE)
     static_df = static_df.rename(
@@ -112,75 +160,69 @@ def load_em_companies() -> pd.DataFrame:
     return em_companies
 
 
-def keep_only_common_isins(em_companies: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, int]]:
+def keep_only_common_isins(em_companies: pd.DataFrame) -> pd.DataFrame:
     """
-    Je garde uniquement les ISIN presents dans toutes les tables utiles.
+    Je retire les entreprises qui manquent completement dans au moins une table utile.
 
-    Pourquoi je fais cela:
-    - le brief dit que si une entreprise manque completement dans une table,
-      je dois la retirer de toutes les tables.
+    Cela respecte la regle:
+    si la ligne complete est absente, je supprime l'ISIN de toutes les tables.
     """
     common_isins = set(em_companies["isin"])
-    data_files = [
-        SCOPE1_FILE,
-        REVENUE_FILE,
-        MARKET_VALUE_MONTHLY_FILE,
-        RETURN_INDEX_MONTHLY_FILE,
-    ]
 
-    for file_name in data_files:
+    for file_name in [SCOPE1_FILE, REVENUE_FILE, MARKET_VALUE_MONTHLY_FILE, RETURN_INDEX_MONTHLY_FILE]:
         file_df = load_datastream_file(file_name)
         common_isins &= set(file_df["isin"])
 
     filtered_companies = em_companies.loc[em_companies["isin"].isin(common_isins)].copy()
     filtered_companies = filtered_companies.sort_values("isin").reset_index(drop=True)
 
-    stats = {
-        "em_companies_before_common_filter": len(em_companies),
-        "em_companies_after_common_filter": len(filtered_companies),
-        "dropped_full_row_missing": len(em_companies) - len(filtered_companies),
-    }
-    return filtered_companies, stats
+    return filtered_companies
 
 
-def fill_internal_missing_values(wide_df: pd.DataFrame, value_columns: list[object]) -> tuple[pd.DataFrame, int]:
+def fill_annual_missing_with_previous_value(
+    wide_df: pd.DataFrame,
+    year_columns: list[int],
+) -> tuple[pd.DataFrame, int]:
     """
-    Je remplis seulement les trous internes avec la valeur precedente.
+    Je remplis les valeurs annuelles manquantes avec la valeur precedente a partir du
+    premier point observe.
 
-    Ce que je respecte:
-    - je laisse les trous au debut,
-    - je laisse les trous a la fin,
-    - je remplis seulement les trous entre deux valeurs connues.
+    Pourquoi je fais cela:
+    - le document demande de remplir les trous au milieu,
+    - et aussi les trous en fin d'echantillon pour le carbone et le revenu,
+    - mais je laisse les trous au debut, car la firme n'est peut-etre pas encore investissable.
     """
-    cleaned_df = wide_df.copy()
-    filled_cells = 0
+    cleaned_df = wide_df.copy()  # Je travaille sur une copie pour garder le fichier d'origine intact.
+    filled_cells = 0  # Je compte combien de cases j'ai remplies.
 
-    for row_index in cleaned_df.index:
-        row_values = cleaned_df.loc[row_index, value_columns].copy()
-        if row_values.notna().sum() < 2:
-            continue
+    for row_index in cleaned_df.index:  # Je traite une entreprise a la fois.
+        previous_value = pd.NA  # Je memorise ici la derniere valeur connue.
+        seen_first_value = False  # Je distingue ce qui se passe avant et apres la premiere vraie valeur.
 
-        first_valid = row_values.first_valid_index()
-        last_valid = row_values.last_valid_index()
-        internal_window = row_values.loc[first_valid:last_valid].copy()
-        missing_before_fill = int(internal_window.isna().sum())
+        for year in year_columns:  # Je parcours les annees dans l'ordre.
+            current_value = cleaned_df.at[row_index, year]  # Je lis la valeur de l'annee courante.
 
-        internal_window = internal_window.ffill()
-        cleaned_df.loc[row_index, internal_window.index] = internal_window.to_numpy()
-        filled_cells += missing_before_fill
+            if pd.notna(current_value):  # Si j'ai une vraie valeur,
+                previous_value = current_value  # je la garde en memoire,
+                seen_first_value = True  # et je sais que la serie a commence.
+                continue  # Je passe alors a l'annee suivante.
 
-    return cleaned_df, filled_cells
+            if seen_first_value and pd.notna(previous_value):  # Si la serie a deja commence et qu'il manque une valeur,
+                cleaned_df.at[row_index, year] = previous_value  # je remplace le trou par la valeur precedente.
+                filled_cells += 1  # Je compte cette case remplie.
+
+    return cleaned_df, filled_cells  # Je renvoie la table nettoyee et le nombre de trous remplis.
 
 
 def find_matching_month_column(
-    date_columns: list[pd.Timestamp | datetime], delisting_date: pd.Timestamp
+    date_columns: list[pd.Timestamp | datetime],
+    delisting_date: pd.Timestamp,
 ) -> pd.Timestamp | None:
     """
-    Je retrouve la colonne mensuelle correspondant au mois du delisting.
+    Je retrouve le dernier jour de bourse disponible du mois de delisting.
 
-    Pourquoi je fais cela:
-    - Datastream utilise souvent le dernier jour de bourse du mois,
-    - ce n'est pas toujours exactement la fin de mois calendaire.
+    Je fais cela car Datastream travaille souvent avec la fin de mois de bourse,
+    pas forcement la fin de mois calendaire.
     """
     matching_columns = [
         pd.Timestamp(column)
@@ -195,16 +237,16 @@ def find_matching_month_column(
     return max(matching_columns)
 
 
-def build_monthly_prices_panel(em_companies: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, int]]:
+def build_monthly_data(em_companies: pd.DataFrame) -> pd.DataFrame:
     """
-    Je construis le panel mensuel de prix a partir du market value et du return index.
+    Je nettoie les prix mensuels et je calcule les rendements mensuels.
 
     Ce que je fais ici:
-    - je nettoie les deux exports mensuels,
-    - je remplace les prix RI < 0.5 par des valeurs manquantes,
+    - je garde seulement les entreprises EM retenues,
+    - je traite les RI < 0.5 comme des valeurs manquantes,
     - je mets le prix a 0 au mois du delisting,
-    - je mets des valeurs manquantes apres le delisting,
-    - je calcule le rendement mensuel a partir du RI.
+    - je mets les mois suivants a manquant,
+    - je calcule les simple returns mensuels a partir du RI.
     """
     market_value_wide = load_datastream_file(MARKET_VALUE_MONTHLY_FILE)
     return_index_wide = load_datastream_file(RETURN_INDEX_MONTHLY_FILE)
@@ -216,28 +258,15 @@ def build_monthly_prices_panel(em_companies: pd.DataFrame) -> tuple[pd.DataFrame
     return_index_wide = em_companies.merge(return_index_wide, on="isin", how="left")
 
     market_value_columns = sorted(
-        [col for col in market_value_wide.columns if isinstance(col, (datetime, pd.Timestamp))]
+        [column for column in market_value_wide.columns if isinstance(column, (datetime, pd.Timestamp))]
     )
     return_index_columns = sorted(
-        [col for col in return_index_wide.columns if isinstance(col, (datetime, pd.Timestamp))]
-    )
-
-    market_value_wide, market_value_internal_fills = fill_internal_missing_values(
-        market_value_wide, market_value_columns
-    )
-    return_index_wide, return_index_internal_fills = fill_internal_missing_values(
-        return_index_wide, return_index_columns
+        [column for column in return_index_wide.columns if isinstance(column, (datetime, pd.Timestamp))]
     )
 
     low_price_mask = return_index_wide[return_index_columns].lt(LOW_PRICE_THRESHOLD)
     low_price_mask = low_price_mask & return_index_wide[return_index_columns].notna()
-    low_price_count = int(low_price_mask.sum().sum())
     return_index_wide.loc[:, return_index_columns] = return_index_wide[return_index_columns].mask(low_price_mask)
-
-    delisting_count = 0
-    forced_zero_count = 0
-    missing_after_delisting_count_mv = 0
-    missing_after_delisting_count_ri = 0
 
     for row_index in em_companies.index:
         delisting_date = em_companies.at[row_index, "delisting_date"]
@@ -250,24 +279,14 @@ def build_monthly_prices_panel(em_companies: pd.DataFrame) -> tuple[pd.DataFrame
         if market_value_month is None or return_index_month is None:
             continue
 
-        delisting_count += 1
-
-        later_market_value_columns = [col for col in market_value_columns if pd.Timestamp(col) > market_value_month]
-        later_return_index_columns = [col for col in return_index_columns if pd.Timestamp(col) > return_index_month]
-
-        missing_after_delisting_count_mv += int(
-            market_value_wide.loc[row_index, later_market_value_columns].notna().sum()
-        )
-        missing_after_delisting_count_ri += int(
-            return_index_wide.loc[row_index, later_return_index_columns].notna().sum()
-        )
+        later_market_value_columns = [column for column in market_value_columns if pd.Timestamp(column) > market_value_month]
+        later_return_index_columns = [column for column in return_index_columns if pd.Timestamp(column) > return_index_month]
 
         market_value_wide.loc[row_index, later_market_value_columns] = pd.NA
         return_index_wide.loc[row_index, later_return_index_columns] = pd.NA
 
         market_value_wide.at[row_index, market_value_month] = 0.0
         return_index_wide.at[row_index, return_index_month] = 0.0
-        forced_zero_count += 1
 
     id_columns = ["isin", "company_name", "country", "region", "delisting_date"]
 
@@ -284,30 +303,30 @@ def build_monthly_prices_panel(em_companies: pd.DataFrame) -> tuple[pd.DataFrame
         value_name="return_index",
     )
 
-    monthly_panel = market_value_long.merge(
+    monthly_data = market_value_long.merge(
         return_index_long[["isin", "date", "return_index"]],
         on=["isin", "date"],
         how="outer",
     )
 
-    monthly_panel["date"] = pd.to_datetime(monthly_panel["date"])
-    monthly_panel = monthly_panel.sort_values(["isin", "date"]).reset_index(drop=True)
+    monthly_data["date"] = pd.to_datetime(monthly_data["date"])
+    monthly_data = monthly_data.sort_values(["isin", "date"]).reset_index(drop=True)
 
-    monthly_panel["return_index_lag"] = monthly_panel.groupby("isin")["return_index"].shift(1)
-    monthly_panel["monthly_return"] = (
-        monthly_panel["return_index"] / monthly_panel["return_index_lag"] - 1
+    monthly_data["return_index_lag"] = monthly_data.groupby("isin")["return_index"].shift(1)
+    monthly_data["monthly_return"] = (
+        monthly_data["return_index"] / monthly_data["return_index_lag"] - 1
     )
 
-    invalid_return_mask = monthly_panel["return_index"].isna() | monthly_panel["return_index_lag"].isna()
-    monthly_panel.loc[invalid_return_mask, "monthly_return"] = pd.NA
+    invalid_return_mask = monthly_data["return_index"].isna() | monthly_data["return_index_lag"].isna()
+    monthly_data.loc[invalid_return_mask, "monthly_return"] = pd.NA
 
-    monthly_panel["is_delisting_month"] = (
-        monthly_panel["delisting_date"].notna()
-        & (monthly_panel["date"].dt.to_period("M") == monthly_panel["delisting_date"].dt.to_period("M"))
-        & monthly_panel["return_index"].eq(0)
+    monthly_data["is_delisting_month"] = (
+        monthly_data["delisting_date"].notna()
+        & (monthly_data["date"].dt.to_period("M") == monthly_data["delisting_date"].dt.to_period("M"))
+        & monthly_data["return_index"].eq(0)
     )
 
-    monthly_panel = monthly_panel[
+    monthly_data = monthly_data[
         [
             "isin",
             "company_name",
@@ -322,31 +341,17 @@ def build_monthly_prices_panel(em_companies: pd.DataFrame) -> tuple[pd.DataFrame
         ]
     ]
 
-    stats = {
-        "market_value_internal_gaps_filled": market_value_internal_fills,
-        "return_index_internal_gaps_filled": return_index_internal_fills,
-        "ri_prices_below_0_5_set_to_missing": low_price_count,
-        "delisting_events_applied": delisting_count,
-        "months_forced_to_zero": forced_zero_count,
-        "market_value_cells_removed_after_delisting": missing_after_delisting_count_mv,
-        "return_index_cells_removed_after_delisting": missing_after_delisting_count_ri,
-    }
-    return monthly_panel, stats
+    return monthly_data
 
 
-def build_annual_data_panel(em_companies: pd.DataFrame, monthly_panel: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, int]]:
+def build_annual_data(em_companies: pd.DataFrame, monthly_data: pd.DataFrame) -> pd.DataFrame:
     """
-    Je construis le panel annuel utile pour le projet.
+    Je construis le fichier annuel utile pour les parties 1 et 2.1.
 
-    Ce que je garde:
+    Je garde uniquement:
     - Scope 1,
     - Revenue,
-    - prix de fin d'annee issus du panel mensuel nettoye.
-
-    Pourquoi je procede ainsi:
-    - je n'ai plus besoin de Scope 2,
-    - je veux que les prix de fin d'annee soient coherents avec les regles sur
-      les delistings et les low prices.
+    - prix de fin d'annee nettoyes a partir du mensuel.
     """
     scope1_wide = load_datastream_file(SCOPE1_FILE)
     revenue_wide = load_datastream_file(REVENUE_FILE)
@@ -354,11 +359,11 @@ def build_annual_data_panel(em_companies: pd.DataFrame, monthly_panel: pd.DataFr
     scope1_wide = scope1_wide.loc[scope1_wide["isin"].isin(em_companies["isin"])].copy()
     revenue_wide = revenue_wide.loc[revenue_wide["isin"].isin(em_companies["isin"])].copy()
 
-    scope1_year_columns = sorted([col for col in scope1_wide.columns if isinstance(col, int)])
-    revenue_year_columns = sorted([col for col in revenue_wide.columns if isinstance(col, int)])
+    scope1_year_columns = sorted([column for column in scope1_wide.columns if isinstance(column, int)])
+    revenue_year_columns = sorted([column for column in revenue_wide.columns if isinstance(column, int)])
 
-    scope1_wide, scope1_internal_fills = fill_internal_missing_values(scope1_wide, scope1_year_columns)
-    revenue_wide, revenue_internal_fills = fill_internal_missing_values(revenue_wide, revenue_year_columns)
+    scope1_wide, _ = fill_annual_missing_with_previous_value(scope1_wide, scope1_year_columns)
+    revenue_wide, _ = fill_annual_missing_with_previous_value(revenue_wide, revenue_year_columns)
 
     scope1_long = scope1_wide.melt(
         id_vars=["isin"],
@@ -376,10 +381,10 @@ def build_annual_data_panel(em_companies: pd.DataFrame, monthly_panel: pd.DataFr
     scope1_long["year"] = scope1_long["year"].astype(int)
     revenue_long["year"] = revenue_long["year"].astype(int)
 
-    annual_panel = em_companies.merge(scope1_long, on="isin", how="left")
-    annual_panel = annual_panel.merge(revenue_long, on=["isin", "year"], how="left")
+    annual_data = em_companies.merge(scope1_long, on="isin", how="left")
+    annual_data = annual_data.merge(revenue_long, on=["isin", "year"], how="left")
 
-    year_end_prices = monthly_panel.loc[monthly_panel["date"].dt.month == 12].copy()
+    year_end_prices = monthly_data.loc[monthly_data["date"].dt.month == 12].copy()
     year_end_prices["year"] = year_end_prices["date"].dt.year
     year_end_prices = year_end_prices.rename(
         columns={
@@ -389,7 +394,7 @@ def build_annual_data_panel(em_companies: pd.DataFrame, monthly_panel: pd.DataFr
     )
     year_end_prices["price_available_eoy"] = year_end_prices["year_end_return_index"].notna()
 
-    annual_panel = annual_panel.merge(
+    annual_data = annual_data.merge(
         year_end_prices[
             [
                 "isin",
@@ -403,37 +408,36 @@ def build_annual_data_panel(em_companies: pd.DataFrame, monthly_panel: pd.DataFr
         how="left",
     )
 
-    annual_panel = annual_panel.sort_values(["isin", "year"]).reset_index(drop=True)
+    annual_data = annual_data.sort_values(["isin", "year"]).reset_index(drop=True)
 
-    stats = {
-        "scope1_internal_gaps_filled": scope1_internal_fills,
-        "revenue_internal_gaps_filled": revenue_internal_fills,
-    }
-    return annual_panel, stats
+    return annual_data
 
 
-def build_investment_universe(monthly_panel: pd.DataFrame) -> pd.DataFrame:
+def build_base_investment_set(monthly_data: pd.DataFrame) -> pd.DataFrame:
     """
-    Je construis ici l'univers investissable annee par annee.
+    Je construis l'univers investissable de base pour la partie 2.1.
 
-    Ce que je fais:
-    - si le prix de fin d'annee Y manque, je n'investis pas en Y+1,
-    - je regarde sur les 10 annees precedentes la part des rendements egaux a 0,
-    - si cette part depasse 50%, je considere l'action comme stale.
+    A la fin de l'annee Y, je garde l'entreprise si:
+    - le prix de fin d'annee Y est disponible,
+    - la part de rendements mensuels egaux a 0 sur les 10 dernieres annees
+      ne depasse pas 50%.
+
+    Je me limite aux annees de formation 2013 a 2024,
+    car le document dit que l'exercice d'allocation commence fin 2013.
     """
-    year_end_rows = monthly_panel.loc[monthly_panel["date"].dt.month == 12].copy()
+    year_end_rows = monthly_data.loc[monthly_data["date"].dt.month == 12].copy()
     year_end_rows["formation_year"] = year_end_rows["date"].dt.year
     year_end_rows["investment_year"] = year_end_rows["formation_year"] + 1
     year_end_rows["price_available_eoy"] = year_end_rows["return_index"].notna()
 
     results = []
 
-    for formation_year in sorted(year_end_rows["formation_year"].unique()):
+    for formation_year in range(FIRST_FORMATION_YEAR, LAST_FORMATION_YEAR + 1):
         window_start = pd.Timestamp(formation_year - ESTIMATION_WINDOW_YEARS + 1, 1, 1)
         window_end = pd.Timestamp(formation_year, 12, 31)
 
-        window_data = monthly_panel.loc[
-            (monthly_panel["date"] >= window_start) & (monthly_panel["date"] <= window_end),
+        window_data = monthly_data.loc[
+            (monthly_data["date"] >= window_start) & (monthly_data["date"] <= window_end),
             ["isin", "monthly_return"],
         ].copy()
 
@@ -449,9 +453,7 @@ def build_investment_universe(monthly_panel: pd.DataFrame) -> pd.DataFrame:
         stale_stats["zero_return_ratio_10y"] = (
             stale_stats["zero_return_count_10y"] / stale_stats["valid_return_count_10y"]
         )
-        stale_stats.loc[
-            stale_stats["valid_return_count_10y"] == 0, "zero_return_ratio_10y"
-        ] = pd.NA
+        stale_stats.loc[stale_stats["valid_return_count_10y"] == 0, "zero_return_ratio_10y"] = pd.NA
         stale_stats["stale_price_flag"] = stale_stats["zero_return_ratio_10y"] > STALE_PRICE_THRESHOLD
         stale_stats["stale_price_flag"] = stale_stats["stale_price_flag"].fillna(False)
 
@@ -460,7 +462,7 @@ def build_investment_universe(monthly_panel: pd.DataFrame) -> pd.DataFrame:
         year_slice["valid_return_count_10y"] = year_slice["valid_return_count_10y"].fillna(0).astype(int)
         year_slice["zero_return_count_10y"] = year_slice["zero_return_count_10y"].fillna(0).astype(int)
         year_slice["stale_price_flag"] = year_slice["stale_price_flag"].fillna(False)
-        year_slice["investable_next_year"] = (
+        year_slice["base_investable_next_year"] = (
             year_slice["price_available_eoy"] & (~year_slice["stale_price_flag"])
         )
 
@@ -481,7 +483,7 @@ def build_investment_universe(monthly_panel: pd.DataFrame) -> pd.DataFrame:
                     "zero_return_count_10y",
                     "zero_return_ratio_10y",
                     "stale_price_flag",
-                    "investable_next_year",
+                    "base_investable_next_year",
                 ]
             ].rename(
                 columns={
@@ -491,169 +493,66 @@ def build_investment_universe(monthly_panel: pd.DataFrame) -> pd.DataFrame:
             )
         )
 
-    investment_universe = pd.concat(results, ignore_index=True)
-    investment_universe = investment_universe.sort_values(["formation_year", "isin"]).reset_index(drop=True)
-    return investment_universe
-
-
-def build_snapshot_files(annual_panel: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Je prepare enfin deux vues simples pour la suite du projet.
-
-    Pourquoi 2024:
-    - les emissions 2025 sont encore trop peu completes,
-    - 2024 est plus exploitable pour Scope 1.
-    """
-    snapshot_2024 = annual_panel.loc[annual_panel["year"] == 2024].copy()
-    scope1_ready_2024 = snapshot_2024.dropna(
-        subset=[
-            "scope1_co2",
-            "revenue_usd",
-            "year_end_market_value_usd",
-            "year_end_return_index",
-        ]
-    ).copy()
-
-    snapshot_2024 = snapshot_2024.sort_values("isin").reset_index(drop=True)
-    scope1_ready_2024 = scope1_ready_2024.sort_values("isin").reset_index(drop=True)
-    return snapshot_2024, scope1_ready_2024
-
-
-def build_summary_table(*stats_dicts: dict[str, int]) -> pd.DataFrame:
-    """Je rassemble toutes les statistiques de nettoyage dans un tableau final."""
-    rows: list[dict[str, object]] = []
-
-    for stats in stats_dicts:
-        for metric, value in stats.items():
-            rows.append({"metric": metric, "value": value})
-
-    return pd.DataFrame(rows)
-
-
-def write_excel_with_fallback(df: pd.DataFrame, file_name: str) -> Path:
-    """
-    J'ecris un fichier Excel, et si le fichier est ouvert je cree une version _new.
-
-    Pourquoi je fais cela:
-    - Excel verrouille souvent les fichiers ouverts,
-    - je prefere sauver le resultat plutot que faire echouer tout le script.
-    """
-    target_path = PROCESSED_DIR / file_name
-
-    try:
-        df.to_excel(target_path, index=False)
-        return target_path
-    except PermissionError:
-        fallback_path = target_path.with_name(f"{target_path.stem}_new{target_path.suffix}")
-        df.to_excel(fallback_path, index=False)
-        return fallback_path
+    base_investment_set = pd.concat(results, ignore_index=True)
+    base_investment_set = base_investment_set.sort_values(["formation_year", "isin"]).reset_index(drop=True)
+    return base_investment_set
 
 
 def save_outputs(
     em_companies: pd.DataFrame,
-    monthly_panel: pd.DataFrame,
-    annual_panel: pd.DataFrame,
-    investment_universe: pd.DataFrame,
-    risk_free_rate: pd.DataFrame,
-    snapshot_2024: pd.DataFrame,
-    scope1_ready_2024: pd.DataFrame,
-    summary_table: pd.DataFrame,
+    monthly_data: pd.DataFrame,
+    annual_data: pd.DataFrame,
+    base_investment_set: pd.DataFrame,
 ) -> dict[str, str]:
-    """
-    Je sauvegarde maintenant les sorties finales dans un ordre logique.
-
-    Ordre choisi:
-    - A: entreprises EM,
-    - B: prix mensuels nettoyes,
-    - C: donnees annuelles utiles,
-    - D: univers investissable,
-    - E: taux sans risque,
-    - F/G: vues 2024,
-    - H: resume du nettoyage.
-    """
+    """J'enregistre les sorties finales de la partie 1."""
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
 
     written_files = {
-        "A": str(write_excel_with_fallback(em_companies, OUTPUT_FILES["em_companies"])),
-        "B": str(write_excel_with_fallback(monthly_panel, OUTPUT_FILES["monthly_panel"])),
-        "C": str(write_excel_with_fallback(annual_panel, OUTPUT_FILES["annual_panel"])),
-        "D": str(write_excel_with_fallback(investment_universe, OUTPUT_FILES["investment_universe"])),
-        "E": str(write_excel_with_fallback(risk_free_rate, OUTPUT_FILES["risk_free"])),
-        "F": str(write_excel_with_fallback(snapshot_2024, OUTPUT_FILES["snapshot_2024"])),
-        "G": str(write_excel_with_fallback(scope1_ready_2024, OUTPUT_FILES["scope1_ready_2024"])),
-        "H": str(write_excel_with_fallback(summary_table, OUTPUT_FILES["summary"])),
+        "A": str(write_excel(rename_columns_for_export(em_companies), OUTPUT_FILES["companies"])),
+        "B": str(write_excel(rename_columns_for_export(monthly_data), OUTPUT_FILES["monthly_data"])),
+        "C": str(write_excel(rename_columns_for_export(annual_data), OUTPUT_FILES["annual_data"])),
+        "D": str(write_excel(rename_columns_for_export(base_investment_set), OUTPUT_FILES["base_investment_set"])),
     }
     return written_files
 
 
-def clean_risk_free_rate() -> pd.DataFrame:
-    """
-    Je nettoie le taux sans risque mensuel.
-
-    Pourquoi je fais cela:
-    - je veux l'avoir sous une forme simple et directement reutilisable plus tard.
-    """
-    risk_free_df = pd.read_excel(RAW_DIR / RISK_FREE_FILE)
-    risk_free_df = risk_free_df.rename(columns={"Unnamed: 0": "yyyymm", "RF": "rf_percent"})
-    risk_free_df["yyyymm"] = risk_free_df["yyyymm"].astype(str).str.strip()
-    risk_free_df["date"] = pd.to_datetime(risk_free_df["yyyymm"] + "01", format="%Y%m%d")
-    risk_free_df["date"] = risk_free_df["date"] + pd.offsets.MonthEnd(0)
-    risk_free_df["rf_percent"] = pd.to_numeric(risk_free_df["rf_percent"], errors="coerce")
-    risk_free_df["rf_decimal"] = risk_free_df["rf_percent"] / 100
-
-    risk_free_df = risk_free_df[["date", "rf_percent", "rf_decimal"]]
-    risk_free_df = risk_free_df.sort_values("date").reset_index(drop=True)
-    return risk_free_df
-
-
 def main() -> None:
-    # Je commence par definir l'univers de base Emerging Markets.
-    log_step("Etape 1/7 - Je charge les entreprises Emerging Markets...")
+    # Je commence par definir l'univers EM du projet.
+    log_step("Etape 1/5 - Je charge les entreprises Emerging Markets...")
     em_companies = load_em_companies()
 
     # Je retire ensuite les entreprises qui manquent completement dans une table utile.
-    log_step("Etape 2/7 - Je garde seulement les ISIN presents dans toutes les tables utiles...")
-    em_companies, common_isin_stats = keep_only_common_isins(em_companies)
+    log_step("Etape 2/5 - Je retire les ISIN dont la ligne complete manque dans une table utile...")
+    em_companies = keep_only_common_isins(em_companies)
 
-    # Je nettoie ensuite les prix mensuels, car ils servent aussi a construire les regles d'investissement.
-    log_step("Etape 3/7 - Je nettoie les prix mensuels et je calcule les rendements...")
-    monthly_panel, monthly_stats = build_monthly_prices_panel(em_companies)
+    # Je nettoie les prix mensuels avant toute chose, car ils servent aux regles d'investissement.
+    log_step("Etape 3/5 - Je nettoie les prix mensuels et je calcule les rendements mensuels...")
+    monthly_data = build_monthly_data(em_companies)
 
-    # Je nettoie ensuite les donnees annuelles vraiment utiles pour votre projet.
-    log_step("Etape 4/7 - Je construis les donnees annuelles utiles (Scope 1, revenue, prix fin d'annee)...")
-    annual_panel, annual_stats = build_annual_data_panel(em_companies, monthly_panel)
+    # Je nettoie ensuite les donnees annuelles utiles a la partie 2.1.
+    log_step("Etape 4/5 - Je nettoie Scope 1, Revenue et les prix de fin d'annee...")
+    annual_data = build_annual_data(em_companies, monthly_data)
 
-    # Je construis maintenant l'univers investissable annee par annee.
-    log_step("Etape 5/7 - Je construis l'univers investissable avec le filtre stale prices...")
-    investment_universe = build_investment_universe(monthly_panel)
-
-    # Je nettoie aussi le taux sans risque pour l'avoir deja pret pour la suite.
-    log_step("Etape 6/7 - Je nettoie le taux sans risque et je prepare les fichiers 2024...")
-    risk_free_rate = clean_risk_free_rate()
-    snapshot_2024, scope1_ready_2024 = build_snapshot_files(annual_panel)
-
-    # Je termine par les exports Excel ordonnes de A a H.
-    log_step("Etape 7/7 - J'enregistre les fichiers Excel finaux...")
-    summary_table = build_summary_table(common_isin_stats, monthly_stats, annual_stats)
+    # Je termine par l'univers investissable de base et les exports.
+    log_step("Etape 5/5 - Je construis l'univers investissable de base et j'enregistre les sorties...")
+    base_investment_set = build_base_investment_set(monthly_data)
     written_files = save_outputs(
         em_companies=em_companies,
-        monthly_panel=monthly_panel,
-        annual_panel=annual_panel,
-        investment_universe=investment_universe,
-        risk_free_rate=risk_free_rate,
-        snapshot_2024=snapshot_2024,
-        scope1_ready_2024=scope1_ready_2024,
-        summary_table=summary_table,
+        monthly_data=monthly_data,
+        annual_data=annual_data,
+        base_investment_set=base_investment_set,
     )
 
-    log_step("Nettoyage termine.")
+    log_step("Partie 1 terminee.")
     log_step(f"Nombre d'entreprises EM retenues: {len(em_companies)}")
-    log_step(f"Lignes du panel mensuel: {len(monthly_panel)}")
-    log_step(f"Lignes du panel annuel: {len(annual_panel)}")
-    log_step(f"Lignes de l'univers investissable: {len(investment_universe)}")
+    log_step(f"Lignes du fichier mensuel: {len(monthly_data)}")
+    log_step(f"Lignes du fichier annuel: {len(annual_data)}")
+    log_step(f"Lignes du base investment set: {len(base_investment_set)}")
     log_step("Fichiers ecrits:")
     for label, path in written_files.items():
         log_step(f"{label} -> {path}")
+
+    print("Data cleaning termine.", flush=True)
 
 
 if __name__ == "__main__":
