@@ -57,12 +57,28 @@ def load_inputs() -> tuple[pd.DataFrame, pd.DataFrame, dict[int, pd.DataFrame], 
     """
     monthly_data = pd.read_excel(
         PROCESSED_DIR / MONTHLY_DATA_FILE,
-        parse_dates=["date", "delisting_date"],
+        parse_dates=["Date", "Delisting Date"],
     )
     investment_set = pd.read_excel(
         PROCESSED_DIR / INVESTMENT_SET_FILE,
         parse_dates=["delisting_date"],
     )
+
+    monthly_data = monthly_data.rename(columns={
+        "ISIN": "isin",
+        "Company Name": "company_name",
+        "Country": "country",
+        "Region": "region",
+        "Delisting Date": "delisting_date",
+        "Date": "date",
+        "Market Value USD": "market_value_usd",
+        "Return Index": "return_index",
+        "Monthly Return": "monthly_return",
+        "Is Delisting Month": "is_delisting_month",
+    })
+
+    monthly_data["isin"] = monthly_data["isin"].astype(str).str.strip()
+    investment_set["isin"] = investment_set["isin"].astype(str).str.strip()
 
     covariance_workbook = pd.ExcelFile(PROCESSED_DIR / COVARIANCE_FILE)
     covariance_matrices: dict[int, pd.DataFrame] = {}
@@ -73,8 +89,8 @@ def load_inputs() -> tuple[pd.DataFrame, pd.DataFrame, dict[int, pd.DataFrame], 
             sheet_name=sheet_name,
             index_col=0,
         )
-        covariance_matrix.index = covariance_matrix.index.astype(str)
-        covariance_matrix.columns = covariance_matrix.columns.astype(str)
+        covariance_matrix.index = covariance_matrix.index.astype(str).str.strip()
+        covariance_matrix.columns = covariance_matrix.columns.astype(str).str.strip()
         covariance_matrices[formation_year] = covariance_matrix
 
     risk_free_rate = pd.read_excel(RAW_DIR / RISK_FREE_FILE)
@@ -142,6 +158,8 @@ def build_optimal_weights(
     optimizer_eligible_counts: list[dict[str, int]] = []
 
     for formation_year in range(FIRST_FORMATION_YEAR, LAST_FORMATION_YEAR + 1):
+        print(f"Optimizing year {formation_year}", flush=True)
+
         year_investment_set = investment_set.loc[
             (investment_set["formation_year"] == formation_year)
             & (investment_set["min_var_eligible"]),
@@ -162,6 +180,7 @@ def build_optimal_weights(
         if covariance_matrix.empty:
             continue
 
+        print(f"Year {formation_year} - optimizing {len(covariance_matrix)} assets", flush=True)
         optimal_weights = solve_long_only_min_variance(covariance_matrix)
 
         weights_df = optimal_weights.reset_index()
@@ -243,13 +262,14 @@ def compute_ex_post_performance(
         investment_dates = pd.date_range(
             start=pd.Timestamp(investment_year, 1, 31),
             end=pd.Timestamp(investment_year, 12, 31),
-            freq="M",
+            freq="ME",
         )
 
         # Je fais correspondre chaque fin de mois calendaire au dernier mois disponible de trading.
         available_dates = return_matrix.index.to_series()
 
         for calendar_date in investment_dates:
+            print(f"Year {formation_year} - Month {calendar_date}", flush=True)
             month_candidates = available_dates[
                 (available_dates.dt.year == calendar_date.year)
                 & (available_dates.dt.month == calendar_date.month)

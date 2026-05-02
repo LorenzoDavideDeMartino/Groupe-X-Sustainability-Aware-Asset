@@ -3,4 +3,5 @@ __pycache__/
 *.pyc
 .DS_Store
 .codex_tmp/
+.review_tmp/
 SAAM_Project_2026_extracted.txt

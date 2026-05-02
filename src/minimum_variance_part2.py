@@ -86,16 +86,65 @@ def load_part1_outputs() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     monthly_data = pd.read_excel(
         PROCESSED_DIR / MONTHLY_DATA_FILE,
-        parse_dates=["date", "delisting_date"],
+        parse_dates=["Date", "Delisting Date"],
     )
     annual_data = pd.read_excel(
         PROCESSED_DIR / ANNUAL_DATA_FILE,
-        parse_dates=["delisting_date"],
+        parse_dates=["Delisting Date"],
     )
     base_investment_set = pd.read_excel(
         PROCESSED_DIR / BASE_INVESTMENT_SET_FILE,
-        parse_dates=["delisting_date"],
+        parse_dates=["Delisting Date"],
     )
+
+    monthly_data = monthly_data.rename(columns={
+        "ISIN": "isin",
+        "Company Name": "company_name",
+        "Country": "country",
+        "Region": "region",
+        "Delisting Date": "delisting_date",
+        "Date": "date",
+        "Market Value USD": "market_value_usd",
+        "Return Index": "return_index",
+        "Monthly Return": "monthly_return",
+        "Is Delisting Month": "is_delisting_month",
+    })
+
+    annual_data = annual_data.rename(columns={
+        "ISIN": "isin",
+        "Company Name": "company_name",
+        "Country": "country",
+        "Region": "region",
+        "Delisting Date": "delisting_date",
+        "Year": "year",
+        "Scope 1 CO2": "scope1_co2",
+        "Revenue USD": "revenue_usd",
+        "Year End Market Value USD": "year_end_market_value_usd",
+        "Year End Return Index": "year_end_return_index",
+        "Price Available End Of Year": "price_available_eoy",
+    })
+
+    base_investment_set = base_investment_set.rename(columns={
+        "ISIN": "isin",
+        "Company Name": "company_name",
+        "Country": "country",
+        "Region": "region",
+        "Delisting Date": "delisting_date",
+        "Formation Year": "formation_year",
+        "Investment Year": "investment_year",
+        "Year End Market Value USD": "year_end_market_value_usd",
+        "Year End Return Index": "year_end_return_index",
+        "Price Available End Of Year": "price_available_eoy",
+        "Valid Return Count 10Y": "valid_return_count_10y",
+        "Zero Return Count 10Y": "zero_return_count_10y",
+        "Zero Return Ratio 10Y": "zero_return_ratio_10y",
+        "Stale Price Flag": "stale_price_flag",
+        "Base Investable Next Year": "base_investable_next_year",
+    })
+
+    monthly_data["isin"] = monthly_data["isin"].astype(str).str.strip()
+    annual_data["isin"] = annual_data["isin"].astype(str).str.strip()
+    base_investment_set["isin"] = base_investment_set["isin"].astype(str).str.strip()
 
     return monthly_data, annual_data, base_investment_set
 
