@@ -10,9 +10,10 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 PROCESSED_DIR = BASE_DIR / "data" / "processed"
 RAW_DIR = BASE_DIR / "data" / "Raw"
 
-MONTHLY_DATA_FILE = "B_EM_Monthly_Data_With_MC.xlsx"
+MONTHLY_DATA_FILE = "B_EM_Monthly_Data.xlsx"
 INVESTMENT_SET_FILE = "F_MinVar_2_1_Investment_Set.xlsx"
 RISK_FREE_FILE = "Risk_Free_Rate_2025.xlsx"
+MONTHLY_MARKET_CAP_FILE = "DS_MV_T_USD_M_2025.xlsx"
 
 FIRST_FORMATION_YEAR = 2013
 LAST_FORMATION_YEAR = 2024
@@ -40,15 +41,76 @@ def write_excel_with_fallback(df: pd.DataFrame, file_name: str) -> Path:
         return fallback_path
 
 
+def load_monthly_market_cap_long() -> pd.DataFrame:
+    """
+    Je charge la market cap mensuelle brute et je la mets au format long.
+    """
+    market_cap_raw = pd.read_excel(RAW_DIR / MONTHLY_MARKET_CAP_FILE)
+    market_cap_raw = market_cap_raw.loc[market_cap_raw["ISIN"].notna()].copy()
+
+    id_columns = ["NAME", "ISIN"]
+    date_columns = [column for column in market_cap_raw.columns if column not in id_columns]
+
+    market_cap_long = market_cap_raw.melt(
+        id_vars=id_columns,
+        value_vars=date_columns,
+        var_name="date",
+        value_name="market_cap",
+    )
+
+    market_cap_long = market_cap_long.rename(columns={"ISIN": "isin"})
+    market_cap_long["isin"] = market_cap_long["isin"].astype(str).str.strip()
+    market_cap_long["date"] = pd.to_datetime(market_cap_long["date"], errors="coerce")
+    market_cap_long["date"] = market_cap_long["date"] + pd.offsets.MonthEnd(0)
+    market_cap_long["market_cap"] = pd.to_numeric(market_cap_long["market_cap"], errors="coerce")
+    market_cap_long.loc[market_cap_long["market_cap"] <= 0, "market_cap"] = np.nan
+
+    return market_cap_long[["isin", "date", "market_cap"]].drop_duplicates()
+
+
+def merge_market_cap_into_monthly_data(monthly_data: pd.DataFrame) -> pd.DataFrame:
+    """
+    Je rajoute la market cap mensuelle directement dans le fichier mensuel nettoye.
+    """
+    market_cap_long = load_monthly_market_cap_long()
+
+    monthly_data = monthly_data.copy()
+    monthly_data["isin"] = monthly_data["isin"].astype(str).str.strip()
+    monthly_data["date"] = pd.to_datetime(monthly_data["date"], errors="coerce")
+    monthly_data["date"] = monthly_data["date"] + pd.offsets.MonthEnd(0)
+
+    monthly_data = monthly_data.merge(
+        market_cap_long,
+        on=["isin", "date"],
+        how="left",
+    )
+
+    return monthly_data
+
+
 def load_inputs() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     monthly_data = pd.read_excel(
         PROCESSED_DIR / MONTHLY_DATA_FILE,
-        parse_dates=["date", "delisting_date"],
+        parse_dates=["Date", "Delisting Date"],
     )
     investment_set = pd.read_excel(
         PROCESSED_DIR / INVESTMENT_SET_FILE
     )
 
+    monthly_data = monthly_data.rename(columns={
+        "ISIN": "isin",
+        "Company Name": "company_name",
+        "Country": "country",
+        "Region": "region",
+        "Delisting Date": "delisting_date",
+        "Date": "date",
+        "Market Value USD": "market_value_usd",
+        "Return Index": "return_index",
+        "Monthly Return": "monthly_return",
+        "Is Delisting Month": "is_delisting_month",
+    })
+
+    monthly_data = merge_market_cap_into_monthly_data(monthly_data)
     monthly_data["isin"] = monthly_data["isin"].astype(str).str.strip()
     investment_set["isin"] = investment_set["isin"].astype(str).str.strip()
 
@@ -246,7 +308,7 @@ def save_outputs(
 
 
 def main() -> None:
-    log_step("Etape 1/4 - Je charge les donnees...")
+    log_step("Etape 1/4 - Je charge les donnees et j'ajoute la market cap mensuelle...")
     monthly_data, investment_set, risk_free_rate = load_inputs()
 
     log_step("Etape 2/4 - Je construis les matrices mensuelles...")
