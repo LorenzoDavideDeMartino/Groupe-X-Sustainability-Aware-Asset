@@ -183,7 +183,7 @@ def compute_value_weighted_performance(
         investment_dates = pd.date_range(
             start=pd.Timestamp(investment_year, 1, 31),
             end=pd.Timestamp(investment_year, 12, 31),
-            freq="ME",
+            freq="M",
         )
 
         for actual_date in investment_dates:

@@ -262,7 +262,7 @@ def compute_ex_post_performance(
         investment_dates = pd.date_range(
             start=pd.Timestamp(investment_year, 1, 31),
             end=pd.Timestamp(investment_year, 12, 31),
-            freq="ME",
+            freq="M",
         )
 
         # Je fais correspondre chaque fin de mois calendaire au dernier mois disponible de trading.
