@@ -66,8 +66,7 @@ saam-carbon-portfolio/
 |   |-- carbon_comparison_part3_4.py
 |   |-- net_zero_part4_1.py
 |   |-- passive_comparison_part4_2.py
-|   |-- pipeline.py
-|   `-- pipeline_carbon_only.py
+|   `-- pipeline.py
 |-- .gitignore
 `-- README.md
 ```
@@ -110,9 +109,9 @@ saam-carbon-portfolio/
 - `passive_comparison_part4_2.py`
   Compares the passive benchmark, the 50% carbon-reduction passive portfolio, and the net-zero passive portfolio.
 
-## Pipelines
+## Pipeline
 
-### Full Pipeline
+### Full Project Pipeline
 
 Runs the whole project workflow from data cleaning to the end of Part IV:
 
@@ -120,16 +119,7 @@ Runs the whole project workflow from data cleaning to the end of Part IV:
 python src\pipeline.py
 ```
 
-### Carbon-Only Pipeline
-
-Runs only the carbon allocation sections, starting from the already computed files in `data/processed`:
-
-```powershell
-python src\pipeline_carbon_only.py
-```
-
 ## Notes
 
-- The carbon sections use processed files only.
 - Scope 1 is the only emissions scope used in the analysis.
 - The project uses annual portfolio formation years from 2013 to 2024 and monthly out-of-sample returns from 2014 to 2025.
